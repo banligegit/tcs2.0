@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AI 手势贪吃龟</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        body {
+            background-color: #222;
+            color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            min-height: 100vh;
+            margin: 0;
+            padding: 10px;
+            box-sizing: border-box;
+            overflow: hidden;
+            touch-action: none;
+        }
+
+        h1 {
+            margin: 5px 0 10px 0;
+            font-size: 24px;
+            color: #4cd137;
+            text-shadow: 2px 2px 0px #000;
+            animation: float 3s infinite ease-in-out;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-5px); }
+        }
+
+        #main-wrapper {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            align-items: center;
+            width: 100%;
+        }
+
+        /* 摄像头容器 */
+        #camera-container {
+            position: relative;
+            width: 200px;
+            height: 150px;
+            border: 3px solid #00d2d3;
+            border-radius: 15px;
+            overflow: hidden;
+            background: #000;
+            transform: scaleX(-1); 
+            box-shadow: 0 5px 10px rgba(0,0,0,0.5);
+            flex-shrink: 0;
+        }
+
+        #video_input { width: 100%; height: 100%; object-fit: cover; opacity: 0.5; }
+        #hand_canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+
+        .overlay-text {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%) scaleX(-1); 
+            font-size: 50px;
+            font-weight: bold;
+            color: white;
+            text-shadow: 0 0 10px #0abde3;
+            pointer-events: none;
+            transition: opacity 0.2s;
+            opacity: 0;
+        }
+
+        /* 游戏容器 */
+        #game-container {
+            position: relative;
+            border: 6px solid #4cd137;
+            border-radius: 12px;
+            box-shadow: 0 5px 20px rgba(76, 209, 55, 0.3);
+            background: #3c6382;
+            width: 95vw; 
+            height: 95vw; 
+            max-width: 400px;
+            max-height: 400px;
+        }
+
+        canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        .score-board {
+            position: absolute; top: -30px; width: 100%;
+            display: flex; justify-content: space-between;
+            font-size: 16px; font-weight: bold; color: #fff;
+            text-shadow: 1px 1px 0 #000;
+        }
+
+        #loading-msg {
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.9);
+            padding: 20px; border-radius: 15px; z-index: 200;
+            text-align: center; border: 2px solid #4cd137;
+            width: 80%;
+        }
+
+        /* 📱 手机底部控制按钮 */
+        .mobile-controls {
+            display: flex;
+            gap: 15px;
+            margin-top: 15px;
+            width: 100%;
+            justify-content: center;
+            z-index: 100;
+        }
+
+        .game-btn {
+            background: linear-gradient(to bottom, #4cd137, #44bd32);
+            border: none;
+            border-radius: 50px;
+            padding: 12px 25px;
+            color: white;
+            font-family: 'Segoe UI', sans-serif;
+            font-weight: bold;
+            font-size: 16px;
+            box-shadow: 0 4px 0 #009432;
+            cursor: pointer;
+            touch-action: manipulation;
+            transition: transform 0.1s;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        
+        .game-btn:active {
+            transform: translateY(4px);
+            box-shadow: none;
+        }
+
+        .btn-respawn {
+            background: linear-gradient(to bottom, #feca57, #ff9f43);
+            box-shadow: 0 4px 0 #e67e22;
+        }
+
+        .btn-restart {
+            background: linear-gradient(to bottom, #ff6b6b, #ee5253);
+            box-shadow: 0 4px 0 #b33939;
+        }
+
+    </style>
+</head>
+<body>
+
+    <h1>🐢 AI 手势贪吃龟 🐢</h1>
+
+    <div id="loading-msg">
+        <h3>正在启动 AI...</h3>
+        <p>请允许摄像头权限并竖屏游玩</p>
+    </div>
+
+    <div id="main-wrapper">
+        <!-- 摄像头区域 -->
+        <div id="camera-container">
+            <video id="video_input" playsinline></video>
+            <canvas id="hand_canvas"></canvas>
+            <div class="overlay-text" id="gesture-icon">⬆️</div>
+        </div>
+
+        <!-- 游戏区域 -->
+        <div id="game-container">
+            <div class="score-board">
+                <span style="color: #f1c40f">🌟 得分: <span id="score">0</span></span>
+                <span style="color: #00d2d3">🏆 最高: <span id="high-score">0</span></span>
+            </div>
+            <canvas id="gameCanvas" width="440" height="440"></canvas>
+        </div>
+
+        <!-- 📱 手机底部控制按钮 -->
+        <div class="mobile-controls">
+            <button class="game-btn btn-respawn" onclick="handleBtnClick('space')" ontouchstart="handleBtnClick('space')">
+                ✨ 复活 (空格)
+            </button>
+            <button class="game-btn btn-restart" onclick="handleBtnClick('enter')" ontouchstart="handleBtnClick('enter')">
+                🔄 重开 (Enter)
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // --- 游戏变量 ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreElement = document.getElementById('score');
+        const highScoreElement = document.getElementById('high-score');
+        const gestureIcon = document.getElementById('gesture-icon');
+        const loadingMsg = document.getElementById('loading-msg');
+
+        const tileCount = 22; 
+        const gridSize = canvas.width / tileCount; 
+        let speed = 6;
+        let score = 0;
+        let highScore = localStorage.getItem('turtleHighScore') || 0;
+        highScoreElement.innerText = highScore;
+        
+        let headX = 10, headY = 10;
+        let snakeParts = []; 
+        let tailLength = 2;
+        let appleX = 5, appleY = 5;
+        let xVelocity = 0, yVelocity = 0;
+        let isRunning = false;
+        let hasTurnedThisFrame = false; 
+
+        // --- 手势参数 ---
+        let anchorX = null; 
+        let anchorY = null; 
+        const TRIGGER_DIST = 0.10; // 灵敏度阈值
+        let lastMoveTime = 0; 
+        const ANCHOR_RESET_TIME = 300;
+
+        // --- 🎹 键盘 & 📱 按钮监听 ---
+        document.addEventListener('keydown', keyDown);
+
+        function keyDown(event) {
+            if([32, 13, 37, 38, 39, 40].indexOf(event.keyCode) > -1) event.preventDefault();
+
+            if (!isRunning) {
+                if (event.keyCode === 13) startGame(true); 
+                else if (event.keyCode === 32) startGame(false);
+                return;
+            }
+
+            if(event.keyCode == 38 || event.keyCode == 87) changeDirection('up');
+            if(event.keyCode == 40 || event.keyCode == 83) changeDirection('down');
+            if(event.keyCode == 37 || event.keyCode == 65) changeDirection('left');
+            if(event.keyCode == 39 || event.keyCode == 68) changeDirection('right');
+        }
+
+        // 📱 手机按钮处理
+        function handleBtnClick(action) {
+            if (!isRunning) {
+                if (action === 'enter') startGame(true);
+                else if (action === 'space') startGame(false);
+            }
+        }
+
+        // --- 📷 MediaPipe 视觉部分 ---
+        const videoElement = document.getElementById('video_input');
+        const handCanvas = document.getElementById('hand_canvas');
+        const handCtx = handCanvas.getContext('2d');
+
+        function onResults(results) {
+            loadingMsg.style.display = 'none';
+            handCanvas.width = videoElement.videoWidth;
+            handCanvas.height = videoElement.videoHeight;
+            const W = handCanvas.width;
+            const H = handCanvas.height;
+            const now = Date.now();
+
+            handCtx.save();
+            handCtx.clearRect(0, 0, W, H);
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                const currX = landmarks[8].x;
+                const currY = landmarks[8].y;
+
+                if (anchorX === null) { anchorX = currX; anchorY = currY; }
+
+                const diffX = currX - anchorX;
+                const diffY = currY - anchorY;
+                const dist = Math.sqrt(diffX*diffX + diffY*diffY);
+
+                // 视觉反馈
+                handCtx.beginPath();
+                handCtx.arc(anchorX * W, anchorY * H, TRIGGER_DIST * W, 0, 2 * Math.PI);
+                handCtx.strokeStyle = "rgba(255, 255, 255, 0.8)";
+                handCtx.lineWidth = 3;
+                handCtx.setLineDash([10, 5]);
+                handCtx.stroke();
+                handCtx.setLineDash([]);
+
+                handCtx.beginPath();
+                handCtx.moveTo(anchorX * W, anchorY * H);
+                handCtx.lineTo(currX * W, currY * H);
+                handCtx.strokeStyle = dist > TRIGGER_DIST ? "#4cd137" : "rgba(255, 255, 255, 0.4)";
+                handCtx.lineWidth = 4;
+                handCtx.stroke();
+
+                handCtx.beginPath();
+                handCtx.arc(currX * W, currY * H, 15, 0, 2 * Math.PI);
+                handCtx.fillStyle = !isRunning ? "#95a5a6" : (dist > TRIGGER_DIST ? "#e84118" : "#00d2d3");
+                handCtx.fill();
+                handCtx.strokeStyle = "white";
+                handCtx.lineWidth = 2;
+                handCtx.stroke();
+
+                if (dist > TRIGGER_DIST) {
+                    let intendedDir = "";
+                    if (Math.abs(diffX) > Math.abs(diffY)) {
+                        intendedDir = diffX < 0 ? "right" : "left";
+                    } else {
+                        intendedDir = diffY < 0 ? "up" : "down";
+                    }
+
+                    let finalDir = intendedDir;
+                    if ((intendedDir === "up" && yVelocity === 1) || (intendedDir === "down" && yVelocity === -1)) {
+                        finalDir = diffX < 0 ? "right" : "left";
+                    } else if ((intendedDir === "left" && xVelocity === 1) || (intendedDir === "right" && xVelocity === -1)) {
+                        finalDir = diffY < 0 ? "up" : "down";
+                    }
+
+                    if (finalDir) {
+                        if (isRunning) {
+                            changeDirection(finalDir);
+                            let icon = "";
+                            if(finalDir==="up") icon="⬆️"; if(finalDir==="down") icon="⬇️";
+                            if(finalDir==="left") icon="⬅️"; if(finalDir==="right") icon="➡️";
+                            gestureIcon.innerText = icon;
+                            gestureIcon.style.opacity = "1";
+                            setTimeout(() => gestureIcon.style.opacity = "0", 500);
+                        }
+                        anchorX = currX;
+                        anchorY = currY;
+                        lastMoveTime = now;
+                    }
+                } else {
+                    if (now - lastMoveTime > ANCHOR_RESET_TIME) {
+                        anchorX += (currX - anchorX) * 0.05;
+                        anchorY += (currY - anchorY) * 0.05;
+                    }
+                }
+            } else {
+                anchorX = null;
+            }
+            handCtx.restore();
+        }
+
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+        hands.onResults(onResults);
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => { await hands.send({image: videoElement}); },
+            width: 320, height: 240
+        });
+        camera.start();
+
+        // --- 游戏逻辑 ---
+        
+        function startGame(isHardReset = true) {
+            if (isRunning) return;
+            
+            headX = 10; headY = 10; xVelocity = 0; yVelocity = 0;
+            hasTurnedThisFrame = false; snakeParts = [];
+
+            if (isHardReset) {
+                tailLength = 2; score = 0; speed = 6;
+            } else {
+                if(speed > 7) speed -= 1;
+            }
+            
+            scoreElement.innerText = score;
+            isRunning = true;
+            spawnApple();
+            drawGame();
+        }
+
+        function spawnApple() {
+            appleX = Math.floor(Math.random() * tileCount);
+            appleY = Math.floor(Math.random() * tileCount);
+            for(let part of snakeParts) { if(part.x===appleX && part.y===appleY) {spawnApple(); break;} }
+            if(headX === appleX && headY === appleY) spawnApple();
+        }
+
+        function drawGame() {
+            if (!isRunning) return;
+            changeSnakePosition();
+            hasTurnedThisFrame = false;
+            if (isGameOver()) return;
+            checkAppleCollision();
+            drawBackground(); drawApple(); drawTurtle();
+            setTimeout(drawGame, 1000 / speed);
+        }
+
+        function checkAppleCollision() {
+            if (appleX === headX && appleY === headY) {
+                spawnApple();
+                tailLength++;
+                score += 10; 
+                scoreElement.innerText = score;
+                if(speed < 18) speed += 0.2;
+            }
+        }
+
+        function changeSnakePosition() { headX += xVelocity; headY += yVelocity; }
+
+        function isGameOver() {
+            let gameOver = false;
+            if (xVelocity === 0 && yVelocity === 0) return false;
+
+            if (headX < 0 || headX >= tileCount || headY < 0 || headY >= tileCount) gameOver = true;
+            for (let part of snakeParts) { if (part.x === headX && part.y === headY) { gameOver = true; break; } }
+
+            if (gameOver) {
+                ctx.fillStyle = "rgba(0, 0, 0, 0.8)"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = "#e74c3c"; 
+                ctx.font = "bold 36px 'Segoe UI'"; 
+                ctx.textAlign = "center";
+                ctx.fillText("游戏结束!", canvas.width / 2, canvas.height / 2 - 20);
+                
+                ctx.font = "20px 'Segoe UI'"; 
+                ctx.fillStyle = "white";
+                ctx.fillText("得分: " + score, canvas.width / 2, canvas.height / 2 + 20);
+                
+                ctx.font = "16px 'Segoe UI'";
+                ctx.fillStyle = "#f1c40f";
+                ctx.fillText("请点击下方按钮复活或重开", canvas.width / 2, canvas.height / 2 + 60);
+
+                if (score > highScore) {
+                    highScore = score;
+                    localStorage.setItem('turtleHighScore', highScore);
+                    highScoreElement.innerText = highScore;
+                }
+                isRunning = false; anchorX = null;
+            }
+            return gameOver;
+        }
+
+        function changeDirection(dir) {
+            if (!isRunning) return;
+            if (hasTurnedThisFrame) return;
+            if (dir === 'up' && yVelocity === 1) return;
+            if (dir === 'down' && yVelocity === -1) return;
+            if (dir === 'left' && xVelocity === 1) return;
+            if (dir === 'right' && xVelocity === -1) return;
+
+            let changed = false;
+            if (dir === 'up' && yVelocity !== -1) { yVelocity = -1; xVelocity = 0; changed = true; }
+            if (dir === 'down' && yVelocity !== 1) { yVelocity = 1; xVelocity = 0; changed = true; }
+            if (dir === 'left' && xVelocity !== -1) { yVelocity = 0; xVelocity = -1; changed = true; }
+            if (dir === 'right' && xVelocity !== 1) { yVelocity = 0; xVelocity = 1; changed = true; }
+            if (changed) hasTurnedThisFrame = true;
+        }
+
+        // --- 绘图 ---
+        function drawBackground() {
+            for(let i = 0; i < tileCount; i++) {
+                for(let j = 0; j < tileCount; j++) {
+                    ctx.fillStyle = (i + j) % 2 === 0 ? "#81C784" : "#66BB6A";
+                    ctx.fillRect(i * gridSize, j * gridSize, gridSize, gridSize);
+                }
+            }
+        }
+
+        function drawTurtle() {
+            // 尾巴
+            for (let i = 0; i < snakeParts.length; i++) {
+                let part = snakeParts[i];
+                let colorPercent = i / snakeParts.length;
+                ctx.fillStyle = `rgb(${100 + colorPercent * 100}, ${200 - colorPercent * 50}, 50)`;
+                let size = gridSize - 4;
+                ctx.fillRect(part.x * gridSize + 2, part.y * gridSize + 2, size, size);
+                ctx.fillStyle = "rgba(255,255,255,0.3)";
+                ctx.fillRect(part.x * gridSize + 4, part.y * gridSize + 4, size/3, size/3);
+            }
+            snakeParts.push({x: headX, y: headY});
+            while (snakeParts.length > tailLength) snakeParts.shift();
+
+            // 乌龟本体
+            let x = headX * gridSize; let y = headY * gridSize;
+            ctx.save(); 
+            ctx.translate(x + gridSize/2, y + gridSize/2);
+            let angle = 0;
+            if (xVelocity === 1) angle = 0; if (xVelocity === -1) angle = Math.PI;  
+            if (yVelocity === 1) angle = Math.PI/2; if (yVelocity === -1) angle = -Math.PI/2;
+            ctx.rotate(angle);
+
+            let s = gridSize / 10;
+            ctx.fillStyle = "#56ab2f"; 
+            ctx.fillRect(-4*s, -5*s, 2*s, 2*s); ctx.fillRect(2*s, -5*s, 2*s, 2*s);  
+            ctx.fillRect(-4*s, 3*s, 2*s, 2*s); ctx.fillRect(2*s, 3*s, 2*s, 2*s);   
+            ctx.fillStyle = "#1b5e20"; ctx.fillRect(-4*s, -3*s, 8*s, 6*s);
+            ctx.fillStyle = "#4caf50"; ctx.fillRect(-3*s, -2*s, 6*s, 4*s);
+            ctx.fillStyle = "#f1c40f"; ctx.fillRect(-1*s, -1*s, 2*s, 2*s);
+            ctx.fillStyle = "#8bc34a"; ctx.beginPath(); ctx.arc(4*s, 0, 2.5*s, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = "black"; ctx.fillRect(4.5*s, -1.5*s, 1*s, 1*s); ctx.fillRect(4.5*s, 1.0*s, 1*s, 1*s);  
+            ctx.restore();
+        }
+
+        function drawApple() {
+            let x = appleX * gridSize; let y = appleY * gridSize; let center = gridSize / 2;
+            ctx.fillStyle = "rgba(0,0,0,0.2)"; ctx.beginPath(); ctx.arc(x + center + 2, y + center + 2, center - 4, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = "#e74c3c"; ctx.beginPath(); ctx.arc(x + center, y + center, center - 4, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = "rgba(255,255,255,0.4)"; ctx.beginPath(); ctx.arc(x + center - 2, y + center - 2, 3, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = "#2ecc71"; ctx.beginPath(); ctx.moveTo(x + center, y + 2); ctx.lineTo(x + center + 6, y - 2); ctx.lineTo(x + center, y + 6); ctx.fill();
+        }
+
+        drawBackground(); 
+        ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(0,0,canvas.width, canvas.height);
+        ctx.fillStyle = "white"; ctx.textAlign = "center"; ctx.font = "bold 20px 'Segoe UI'";
+        ctx.fillText("等待乌龟苏醒...", canvas.width / 2, canvas.height / 2);
+    </script>
+</body>
+</html>
